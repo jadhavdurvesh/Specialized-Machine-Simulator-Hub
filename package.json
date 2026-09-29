@@ -1,0 +1,9 @@
+{
+  "name": "specialized-machine-simulator-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-machine specialized telemetry simulator hub for Maintain AI",
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}
