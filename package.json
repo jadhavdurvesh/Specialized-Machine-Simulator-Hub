@@ -4,6 +4,7 @@
   "private": true,
   "description": "Multi-machine specialized telemetry simulator hub for Maintain AI",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "deploy:pages": "node cloudflare-pages-deploy.mjs"
   }
 }
