@@ -1,52 +1,142 @@
 (() => {
   const DEFAULT_API = 'https://maintain-ai-3.vercel.app';
-  const STORAGE = { api: 'mai_hub_api', key: 'mai_hub_device_key', interval: 'mai_hub_interval' };
-  const state = { running: false, timer: null, commandTimer: null, busy: false };
+  const STORAGE = {
+    api: 'mai_hub_api',
+    keys: 'mai_hub_device_keys',
+    interval: 'mai_hub_interval',
+  };
+  const state = { running: false, timer: null, commandTimer: null, busy: false, lastMachines: '' };
 
   const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
   const normalizeApi = value => String(value || '').trim().replace(/\/$/, '');
-  const api = () => normalizeApi(document.querySelector('#maiApiUrl')?.value || DEFAULT_API);
-  const key = () => String(document.querySelector('#maiDeviceKey')?.value || '').trim();
-  const interval = () => Math.max(1000, Number(document.querySelector('#maiInterval')?.value || 5000));
+  const api = () => normalizeApi(document.querySelector('#maiApiUrl')?.value || localStorage.getItem(STORAGE.api) || DEFAULT_API);
+  const interval = () => Math.max(1000, Number(document.querySelector('#maiInterval')?.value || localStorage.getItem(STORAGE.interval) || 5000));
+
+  function getKeyMap() {
+    try {
+      const value = JSON.parse(localStorage.getItem(STORAGE.keys) || '{}');
+      return value && typeof value === 'object' ? value : {};
+    } catch { return {}; }
+  }
+
+  function setKey(code, value) {
+    const keys = getKeyMap();
+    if (value) keys[code] = String(value).trim();
+    else delete keys[code];
+    localStorage.setItem(STORAGE.keys, JSON.stringify(keys));
+  }
+
+  // The simulator's machine state is intentionally kept in index.html. This bridge reads
+  // that existing state so every simulator instance keeps its own Maintain AI device key.
+  function machines() {
+    try {
+      const list = window.eval('state.instances');
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function machineRows() {
+    const list = machines();
+    const keys = getKeyMap();
+    return list.map(machine => ({
+      id: machine.id,
+      code: machine.code,
+      name: machine.name,
+      type: machine.type,
+      active: !!machine.active,
+      values: machine.values || {},
+      key: keys[machine.code] || '',
+    }));
+  }
 
   function addPanel() {
     if (document.getElementById('maiConnectionPanel')) return;
     const panel = document.createElement('section');
     panel.id = 'maiConnectionPanel';
-    panel.style.cssText = 'position:fixed;right:18px;bottom:18px;width:min(390px,calc(100vw - 36px));z-index:9999;background:#0d1723;border:1px solid #2a405b;border-radius:14px;box-shadow:0 20px 60px #0009;color:#e8eef7;font:13px/1.45 Inter,system-ui,sans-serif;padding:16px';
+    panel.style.cssText = 'position:fixed;right:18px;bottom:18px;width:min(500px,calc(100vw - 36px));max-height:min(78vh,720px);overflow:auto;z-index:9999;background:#0d1723;border:1px solid #2a405b;border-radius:14px;box-shadow:0 20px 60px #0009;color:#e8eef7;font:13px/1.45 Inter,system-ui,sans-serif;padding:16px';
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px">
-        <div><strong style="font-size:15px">MAINTAIN AI Device Connection</strong><div style="color:#8ea0b7;font-size:11px;margin-top:2px">Simulator → machine device key → Maintain AI</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
+        <div><strong style="font-size:15px">MAINTAIN AI Device Connections</strong><div style="color:#8ea0b7;font-size:11px;margin-top:2px">One unique device key per simulator machine</div></div>
         <span id="maiConnStatus" style="padding:5px 8px;border:1px solid #344b66;border-radius:999px;color:#8ea0b7">Idle</span>
       </div>
       <label style="display:block;color:#8ea0b7;font-size:11px;margin:8px 0 5px">MAINTAIN AI API URL</label>
       <input id="maiApiUrl" value="${esc(localStorage.getItem(STORAGE.api) || DEFAULT_API)}" style="width:100%;box-sizing:border-box;background:#09131f;border:1px solid #2a405b;color:#e8eef7;border-radius:8px;padding:9px">
-      <label style="display:block;color:#8ea0b7;font-size:11px;margin:8px 0 5px">Machine Device Key</label>
-      <input id="maiDeviceKey" type="password" value="${esc(localStorage.getItem(STORAGE.key) || '')}" placeholder="Paste the key generated in MAINTAIN AI" style="width:100%;box-sizing:border-box;background:#09131f;border:1px solid #2a405b;color:#e8eef7;border-radius:8px;padding:9px">
       <div style="display:grid;grid-template-columns:1fr 120px;gap:8px;margin-top:8px">
-        <button id="maiSave" style="background:#142235;color:#e8eef7;border:1px solid #2a405b;border-radius:8px;padding:9px;cursor:pointer">Save locally</button>
+        <button id="maiSave" style="background:#142235;color:#e8eef7;border:1px solid #2a405b;border-radius:8px;padding:9px;cursor:pointer">Save configuration</button>
         <select id="maiInterval" style="background:#09131f;color:#e8eef7;border:1px solid #2a405b;border-radius:8px;padding:9px">
           <option value="1000">1 second</option><option value="5000">5 seconds</option><option value="10000">10 seconds</option>
         </select>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-        <button id="maiConnect" style="background:#4f8cff;color:white;border:1px solid #4f8cff;border-radius:8px;padding:9px;cursor:pointer">Start telemetry</button>
-        <button id="maiStop" style="background:#3b1820;color:#ffd9df;border:1px solid #6c2735;border-radius:8px;padding:9px;cursor:pointer">Stop telemetry</button>
+      <div style="margin-top:12px;color:#8ea0b7;font-size:11px">Machine device keys</div>
+      <div id="maiMachineKeys" style="display:grid;gap:8px;margin-top:6px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+        <button id="maiConnect" style="background:#4f8cff;color:white;border:1px solid #4f8cff;border-radius:8px;padding:9px;cursor:pointer">Start all telemetry</button>
+        <button id="maiStop" style="background:#3b1820;color:#ffd9df;border:1px solid #6c2735;border-radius:8px;padding:9px;cursor:pointer">Stop all telemetry</button>
       </div>
-      <div id="maiConnLog" style="margin-top:10px;color:#8ea0b7;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:90px;overflow:auto">Ready. The simulator uses HTTPS device ingestion and the durable command queue.</div>`;
+      <div id="maiConnLog" style="margin-top:10px;color:#8ea0b7;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:120px;overflow:auto">Ready. Configure a separate MAINTAIN AI device key for each machine.</div>`;
     document.body.appendChild(panel);
-    const savedInterval = localStorage.getItem(STORAGE.interval) || '5000';
-    document.querySelector('#maiInterval').value = savedInterval;
-    panel.querySelector('#maiSave').onclick = save;
+    document.querySelector('#maiInterval').value = localStorage.getItem(STORAGE.interval) || '5000';
+    panel.querySelector('#maiSave').onclick = saveConfiguration;
     panel.querySelector('#maiConnect').onclick = start;
     panel.querySelector('#maiStop').onclick = stop;
+    renderMachineKeys();
   }
 
-  function save() {
-    localStorage.setItem(STORAGE.api, normalizeApi(document.querySelector('#maiApiUrl').value));
-    localStorage.setItem(STORAGE.key, key());
+  function renderMachineKeys() {
+    const el = document.querySelector('#maiMachineKeys');
+    if (!el) return;
+    const rows = machineRows();
+    const signature = rows.map(x => `${x.code}:${x.active}`).join('|');
+    if (signature === state.lastMachines && el.children.length === rows.length) {
+      updateConnectionBadges(rows);
+      return;
+    }
+    state.lastMachines = signature;
+    if (!rows.length) {
+      el.innerHTML = '<div style="padding:12px;border:1px dashed #2a405b;border-radius:9px;color:#8ea0b7">No machine instances yet.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(machine => `
+      <div data-machine-row="${esc(machine.code)}" style="padding:10px;border:1px solid #223247;border-radius:10px;background:#09131f">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+          <div><strong>${esc(machine.code)} · ${esc(machine.name)}</strong><div style="color:#8ea0b7;font-size:10px">${esc(machine.type)} · ${machine.active ? 'machine running' : 'machine stopped'}</div></div>
+          <span data-status class="mai-machine-status" style="padding:4px 7px;border:1px solid #344b66;border-radius:999px;color:#8ea0b7;font-size:10px">${machine.key ? 'Key saved' : 'Key required'}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:7px">
+          <input data-key-input type="password" value="${esc(machine.key)}" placeholder="Paste this machine's key generated in MAINTAIN AI" style="min-width:0;background:#07101a;border:1px solid #2a405b;color:#e8eef7;border-radius:8px;padding:8px">
+          <button data-save-key style="background:#142235;color:#e8eef7;border:1px solid #2a405b;border-radius:8px;padding:8px 10px;cursor:pointer">Save</button>
+        </div>
+      </div>`).join('');
+
+    el.querySelectorAll('[data-machine-row]').forEach(row => {
+      const code = row.getAttribute('data-machine-row');
+      row.querySelector('[data-save-key]').onclick = () => {
+        setKey(code, row.querySelector('[data-key-input]').value);
+        log(`Saved device key for ${code}.`);
+        renderMachineKeys();
+      };
+    });
+  }
+
+  function updateConnectionBadges(rows) {
+    for (const machine of rows) {
+      const row = document.querySelector(`[data-machine-row="${CSS.escape(machine.code)}"]`);
+      if (!row) continue;
+      const status = row.querySelector('[data-status]');
+      const key = getKeyMap()[machine.code] || '';
+      if (status) status.textContent = key ? (state.running && machine.active ? 'Telemetry ready' : 'Key saved') : 'Key required';
+      const sub = row.querySelector('div > div > div');
+      if (sub) sub.textContent = `${machine.type} · ${machine.active ? 'machine running' : 'machine stopped'}`;
+    }
+  }
+
+  function saveConfiguration() {
+    localStorage.setItem(STORAGE.api, api());
     localStorage.setItem(STORAGE.interval, String(document.querySelector('#maiInterval').value));
-    log('Configuration saved locally.');
+    log('MAINTAIN AI connection configuration saved locally.');
+    renderMachineKeys();
   }
 
   function log(message, error = false) {
@@ -66,86 +156,111 @@
     el.style.borderColor = ok ? '#1c5546' : '#344b66';
   }
 
-  function currentMachineId() {
-    return document.querySelector('#machineBadge')?.textContent?.trim() || 'SIMULATOR';
-  }
-
-  function readMetrics() {
-    return [...document.querySelectorAll('#metrics .metric')].map(card => {
-      const label = card.querySelector('.label')?.textContent?.trim() || '';
-      const valueText = card.querySelector('.value')?.textContent?.trim() || '';
-      const unit = card.querySelector('.unit')?.textContent?.trim() || '';
-      const value = Number(valueText.replace(/,/g, ''));
-      if (!label || !Number.isFinite(value)) return null;
-      const readingType = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-      return { reading_type: readingType, value, unit };
-    }).filter(Boolean);
-  }
-
-  async function proxy(path, options = {}) {
+  async function proxy(path, deviceKey, options = {}) {
     const response = await fetch('/.netlify/functions/maintain-api', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target: api(), path, method: options.method || 'GET', headers: { 'X-Device-Key': key(), 'Content-Type': 'application/json' }, body: options.body || null })
+      body: JSON.stringify({
+        target: api(),
+        path,
+        method: options.method || 'GET',
+        headers: { 'X-Device-Key': deviceKey, 'Content-Type': 'application/json' },
+        body: options.body || null,
+      })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || data.error || `proxy ${response.status}`);
     return data;
   }
 
+  async function sendMachine(machine) {
+    const key = getKeyMap()[machine.code];
+    if (!key) return { skipped: true, code: machine.code };
+    const readings = Object.entries(machine.values || {}).filter(([, value]) => Number.isFinite(Number(value)));
+    if (!readings.length) return { skipped: true, code: machine.code, reason: 'no telemetry' };
+    for (const [readingType, value] of readings) {
+      const result = await proxy('/api/devices/ingest', key, {
+        method: 'POST',
+        body: {
+          reading_type: readingType,
+          value: Number(value),
+          unit: '',
+          recorded_at: new Date().toISOString(),
+          event_id: `hub-${machine.code}-${Date.now()}-${readingType}`,
+        }
+      });
+      if (result?.safety?.shutdown_requested) {
+        await handleShutdown(machine, result.safety);
+        return { shutdown: true, code: machine.code };
+      }
+    }
+    return { sent: readings.length, code: machine.code };
+  }
+
   async function sendCycle() {
-    if (!state.running || state.busy || !key()) return;
+    if (!state.running || state.busy) return;
     state.busy = true;
     try {
-      const readings = readMetrics();
-      if (!readings.length) throw new Error('No simulator telemetry is currently rendered. Start a machine first.');
-      for (const reading of readings) {
-        const result = await proxy('/api/devices/ingest', { method: 'POST', body: reading });
-        if (result?.safety?.shutdown_requested) {
-          await handleShutdown(result.safety);
-          return;
+      const active = machineRows().filter(machine => machine.active);
+      if (!active.length) {
+        status('No machines running');
+        return;
+      }
+      const results = [];
+      for (const machine of active) {
+        try {
+          results.push(await sendMachine(machine));
+        } catch (error) {
+          results.push({ error: true, code: machine.code, message: error.message });
+          log(`${machine.code} telemetry failed: ${error.message}`, true);
         }
       }
-      status(`Streaming · ${readings.length} readings`, true);
-    } catch (error) {
-      status('Offline');
-      log(`Telemetry send failed: ${error.message}`, true);
+      const missing = results.filter(x => x.skipped && x.code).map(x => x.code);
+      const sent = results.reduce((sum, x) => sum + (x.sent || 0), 0);
+      if (missing.length) log(`Missing device key for: ${missing.join(', ')}. Each machine needs its own key.`, true);
+      status(`Streaming · ${sent} readings`, sent > 0);
     } finally {
       state.busy = false;
     }
   }
 
   async function pollCommands() {
-    if (!state.running || !key()) return;
-    try {
-      const command = await proxy(`/api/devices/commands?ts=${Date.now()}`);
-      if (command?.pending) await handleShutdown(command);
-    } catch (error) {
-      log(`Command check failed: ${error.message}`, true);
+    if (!state.running) return;
+    for (const machine of machineRows().filter(x => x.active)) {
+      const key = getKeyMap()[machine.code];
+      if (!key) continue;
+      try {
+        const command = await proxy(`/api/devices/commands?ts=${Date.now()}`, key);
+        if (command?.pending) await handleShutdown(machine, command);
+      } catch (error) {
+        log(`${machine.code} command check failed: ${error.message}`, true);
+      }
     }
   }
 
-  async function handleShutdown(command) {
-    state.running = false;
-    clearInterval(state.timer);
-    clearInterval(state.commandTimer);
-    const toggle = document.querySelector('#toggleBtn');
-    if (toggle && /stop/i.test(toggle.textContent || '')) toggle.click();
-    status('SAFETY SHUTDOWN');
-    log(`Shutdown command received: ${command.reason || command.command_type || 'safety limit crossed'}`, true);
-    if (command.event_id) {
+  async function handleShutdown(machine, command) {
+    const row = [...document.querySelectorAll('#instances .sim-row')].find(el => (el.querySelector('strong')?.textContent || '').startsWith(machine.code + ' ·'));
+    const button = row?.querySelector('[data-id]');
+    if (button && /stop/i.test(button.textContent || '')) button.click();
+    log(`${machine.code} safety shutdown received: ${command.reason || command.command_type || 'safety limit crossed'}`, true);
+    status(`${machine.code} SAFETY SHUTDOWN`);
+    const key = getKeyMap()[machine.code];
+    if (key && command.event_id) {
       try {
-        await proxy('/api/devices/commands/ack', { method: 'POST', body: { event_id: Number(command.event_id) } });
-        log('Shutdown acknowledgement stored by MAINTAIN AI.');
+        await proxy('/api/devices/commands/ack', key, { method: 'POST', body: { event_id: Number(command.event_id) } });
+        log(`${machine.code} shutdown acknowledgement stored by MAINTAIN AI.`);
       } catch (error) {
-        log(`Shutdown acknowledgement failed: ${error.message}`, true);
+        log(`${machine.code} shutdown acknowledgement failed: ${error.message}`, true);
       }
     }
   }
 
   function start() {
-    if (!key()) { status('Missing key'); log('Paste the device key generated for this machine in MAINTAIN AI.', true); return; }
-    save();
+    const rows = machineRows();
+    if (!rows.length) { status('No machines'); return; }
+    const missing = rows.filter(x => x.active && !getKeyMap()[x.code]).map(x => x.code);
+    if (missing.length) log(`These running machines have no key: ${missing.join(', ')}. Add their individual keys above.`, true);
+    saveConfiguration();
     state.running = true;
     clearInterval(state.timer);
     clearInterval(state.commandTimer);
@@ -153,7 +268,7 @@
     state.timer = setInterval(sendCycle, interval());
     state.commandTimer = setInterval(pollCommands, 1000);
     status('Connecting');
-    log(`Telemetry started for ${currentMachineId()} → ${api()}`);
+    log(`Telemetry started for ${rows.filter(x => x.active).length} running machine(s) → ${api()}`);
   }
 
   function stop() {
@@ -161,11 +276,12 @@
     clearInterval(state.timer);
     clearInterval(state.commandTimer);
     status('Idle');
-    log('Telemetry stopped.');
+    log('MAINTAIN AI telemetry streaming stopped. Simulator machines were not stopped.');
   }
 
   window.addEventListener('load', () => {
     addPanel();
-    log(`Ready for device-key telemetry. Backend: ${api()}`);
+    log(`Ready. MAINTAIN AI uses one device key per machine. Backend: ${api()}`);
+    setInterval(renderMachineKeys, 1000);
   });
 })();
